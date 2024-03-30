@@ -36,6 +36,8 @@ enum {
   PROP_SINK,
   PROP_MUXER,
   PROP_RATE,
+  PROP_FORMAT,
+  PROP_CHANNELS,
   PROP_MAXIMUM_CHUNK_TIME,
   PROP_MINIMUM_SILENCE_TIME,
   PROP_SILENCE_HYSTERESIS,
@@ -54,6 +56,8 @@ struct _MarsChunker {
   GstElement *sink;
   char       *muxer;
   gint        rate;
+  char       *format;
+  gint        channels;
   guint64     hysteresis;
   guint64     max_chunk_time;
   guint64     min_silence_time;
@@ -93,6 +97,12 @@ mars_chunker_set_property (GObject      *object,
     break;
   case PROP_RATE:
     self->rate = g_value_get_int (value);
+    break;
+  case PROP_FORMAT:
+    self->format = g_value_dup_string (value);
+    break;
+  case PROP_CHANNELS:
+    self->channels = g_value_get_int (value);
     break;
   case PROP_MAXIMUM_CHUNK_TIME:
     self->max_chunk_time = g_value_get_uint64 (value);
@@ -139,6 +149,12 @@ mars_chunker_get_property (GObject    *object,
   case PROP_RATE:
     g_value_set_int (value, self->rate);
     break;
+  case PROP_FORMAT:
+    g_value_set_string (value, self->format);
+    break;
+  case PROP_CHANNELS:
+    g_value_set_int (value, self->channels);
+    break;
   case PROP_MAXIMUM_CHUNK_TIME:
     g_value_set_uint64 (value, self->max_chunk_time);
     break;
@@ -164,7 +180,7 @@ static const char* PIPELINE_TEMPLATE =
   "decodebin name=decodebin ! audioconvert "
   "! removesilence silent=false squash=true remove=true hysteresis=%lu "
   "  minimum-silence-time=%lu threshold=%i ! "
-  "audioresample name=resample";
+  "audioconvert ! audioresample name=resample";
 
 
 static GstElement *
@@ -239,7 +255,11 @@ create_pipeline (MarsChunker *self)
   }
 
   resample = gst_bin_get_by_name (GST_BIN (pipeline), "resample");
-  caps = gst_caps_new_simple ("audio/x-raw", "rate", G_TYPE_INT, self->rate, NULL);
+  caps = gst_caps_new_simple ("audio/x-raw",
+                              "rate", G_TYPE_INT, self->rate,
+                              "format", G_TYPE_STRING, self->format,
+                              "channels", G_TYPE_INT, self->channels,
+                              NULL);
 
   if (!gst_element_link_filtered (resample, splitmuxsink, caps)) {
     g_critical ("Unable to link audioresample and splitmuxsink");
@@ -327,6 +347,7 @@ mars_chunker_finalize (GObject *object)
   g_free (self->input);
   g_free (self->output);
   g_free (self->muxer);
+  g_free (self->format);
 
   G_OBJECT_CLASS (mars_chunker_parent_class)->finalize (object);
 }
@@ -344,6 +365,32 @@ mars_chunker_constructed (GObject *object)
 
   if (self->pipeline == NULL)
     return;
+
+  g_debug ("Summary\n"
+           "Input:                %s\n"
+           "Source:               %p\n"
+           "Output:               %s\n"
+           "Sink:                 %p\n"
+           "Muxer:                %s\n"
+           "Rate:                 %i\n"
+           "Format:               %s\n"
+           "Channels:             %i\n"
+           "Maximum chunk time:   %lu\n"
+           "Minimum silence time: %lu\n"
+           "Silence hysteresis:   %lu\n"
+           "Silence threshold:    %i\n",
+           self->input,
+           (void *) self->src,
+           self->output,
+           (void *) self->sink,
+           self->muxer,
+           self->rate,
+           self->format,
+           self->channels,
+           self->max_chunk_time,
+           self->min_silence_time,
+           self->hysteresis,
+           self->threshold);
 
   self->muxsink = gst_bin_get_by_name (GST_BIN (self->pipeline), "muxsink");
   bus = gst_element_get_bus (self->pipeline);
@@ -431,7 +478,31 @@ mars_chunker_class_init (MarsChunkerClass *klass)
    */
   props[PROP_RATE] =
     g_param_spec_int ("rate", "", "",
-                      1, G_MAXINT, 44100,
+                      1, G_MAXINT, MARS_CHUNKER_RATE,
+                      G_PARAM_READWRITE |
+                      G_PARAM_CONSTRUCT_ONLY |
+                      G_PARAM_STATIC_STRINGS);
+
+  /**
+   * MarsChunker:format:
+   *
+   * Format of audio. See GStreamer raw audio media types.
+   */
+  props[PROP_FORMAT] =
+    g_param_spec_string ("format", "", "",
+                         MARS_CHUNKER_FORMAT,
+                         G_PARAM_READWRITE |
+                         G_PARAM_CONSTRUCT_ONLY |
+                         G_PARAM_STATIC_STRINGS);
+
+  /**
+   * MarsChunker:channels:
+   *
+   * Number of audio channels.
+   */
+  props[PROP_CHANNELS] =
+    g_param_spec_int ("channels", "", "",
+                      1, G_MAXINT, MARS_CHUNKER_CHANNELS,
                       G_PARAM_READWRITE |
                       G_PARAM_CONSTRUCT_ONLY |
                       G_PARAM_STATIC_STRINGS);
